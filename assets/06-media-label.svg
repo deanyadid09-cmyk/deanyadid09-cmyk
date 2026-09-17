@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="128" viewBox="0 0 1200 128" role="img" aria-labelledby="title desc">
+<title id="title">Ki motion feed label</title><desc id="desc">Dragon Ball inspired developer interface for SUNDAYS. Original vector artwork.</desc>
+<defs>
+<filter id="glowG" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="glowO" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="10" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="soft" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="22"/></filter>
+<linearGradient id="gGreen" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7BFF72"/><stop offset="1" stop-color="#14D85C"/></linearGradient>
+<linearGradient id="gSky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#02050A"/><stop offset=".58" stop-color="#07120D"/><stop offset="1" stop-color="#020403"/></linearGradient>
+<radialGradient id="gOrange"><stop offset="0" stop-color="#FFE59A"/><stop offset=".5" stop-color="#FF8B18"/><stop offset="1" stop-color="#A83A00"/></radialGradient>
+<radialGradient id="gMoon"><stop offset="0" stop-color="#FFEFB2" stop-opacity=".9"/><stop offset=".58" stop-color="#FFD447" stop-opacity=".4"/><stop offset="1" stop-color="#FF8B18" stop-opacity="0"/></radialGradient>
+<pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse"><path d="M44 0H0V44" fill="none" stroke="#163126" stroke-width="1" opacity=".55"/></pattern>
+<pattern id="micro" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="#7BFF72" stroke-width=".4" opacity=".08"/></pattern>
+</defs><style>
+@keyframes blink{0%,46%,54%,100%{opacity:1}50%{opacity:.12}}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+@keyframes sweep{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes scan{from{transform:translateY(-140px)}to{transform:translateY(800px)}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
+@keyframes aura{0%,100%{opacity:.28;transform:scale(.985)}50%{opacity:.76;transform:scale(1.025)}}
+@keyframes dash{to{stroke-dashoffset:-140}}
+@keyframes glitch{0%,92%,100%{transform:translate(0)}93%{transform:translate(-5px,2px)}95%{transform:translate(4px,-2px)}97%{transform:translate(-2px,1px)}}
+@keyframes ping{0%{r:9;opacity:.9}100%{r:42;opacity:0}}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spark{0%{opacity:0;stroke-dashoffset:90}20%{opacity:1}70%{opacity:.7}100%{opacity:0;stroke-dashoffset:-90}}
+@keyframes breathe{0%,100%{opacity:.18}50%{opacity:.42}}
+@keyframes bars{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+@keyframes orb{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important}}
+</style><rect width="1200" height="128" rx="18" fill="#030507"/><rect x="1" y="1" width="1198" height="126" rx="17" fill="none" stroke="#163126"/><text x="42" y="43" fill="#43C9FF" opacity="1" font-family="'Courier New', monospace" font-size="12" font-weight="900" text-anchor="start" letter-spacing="1.7">KI OUTPUT // MOTION FEED</text><text x="42" y="84" fill="#F7F8EF" opacity="1" font-family="Impact, 'Arial Black', Arial, sans-serif" font-size="26" font-weight="900" text-anchor="start" letter-spacing="1.6">CHARGE → STRIKE → ITERATE</text><text x="1158" y="43" fill="#FFD447" opacity="1" font-family="'Courier New', monospace" font-size="11" font-weight="900" text-anchor="end" letter-spacing="1.3">SECONDARY OFFICIAL MOTION</text><text x="1158" y="84" fill="#43C9FF" opacity="1" font-family="'Courier New', monospace" font-size="12" font-weight="900" text-anchor="end" letter-spacing="0">BANDAI NAMCO / GIPHY</text></svg>
