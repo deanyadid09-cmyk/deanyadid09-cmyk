@@ -1,22 +1,29 @@
-# Dragon Code Z V3 — Canon Media Cut
+# Profile notes
 
-The V2 scouter/HUD skeleton now uses real Dragon Ball media at four impact points:
+Dragon Ball Z themed profile for @deanyadid09-cmyk.
 
-- BANDAI NAMCO Dragon Ball Z transformation GIF as the full-width hero
-- Official Vegeta + scouter image as the fighter dossier anchor
-- Second BANDAI NAMCO DBZ GIF as the KI output motion feed
-- Official Shenron image as the final summon
+The README is a stack of full-width images:
 
-The UI panels, radar, mission screens, tech arsenal, training room, and overlays remain original self-contained SVG assets.
+| File | What it is |
+|---|---|
+| `assets/ticker.svg` | Scrolling scouter feed with Repositories / Follow buttons |
+| `assets/banner.gif` | Animated pixel-art island banner |
+| `assets/hero.svg` | Name in a ki aura, roles cycling above it, power level |
+| `assets/file.svg` | Saiyan file: mission, status, training and motto, beside a dragon radar |
+| `assets/techniques.svg` | Three techniques on scouter lenses, plus the arsenal |
+| `assets/footer.svg` | Seven star orbs, a ki blast, "To be continued" |
+
+The SVG panels are generated. Text is converted to vector outlines, so the panels look the same on every
+device without loading fonts. Every motif is drawn from scratch; no official artwork is used.
 
 ## Edit / rebuild
-Change `PROFILE` or the media constants in `_src/build.py`, then run:
+
+Change `PROFILE` in `_src/build.py`, then run:
 
 ```bash
+pip install fonttools
 python _src/build.py
 ```
 
-The build script overwrites generated SVGs and README content without deleting the repository directory.
-
-## Publish
-The GitHub profile repository must be public and named exactly `deanyadid09-cmyk`. Place `README.md`, `assets/`, `_src/`, and `ASSET_SOURCES.md` at the repository root.
+Every SVG in `assets/` is regenerated; the banner GIF is left alone. Open `_src/preview.html` in a browser
+to see the whole profile before pushing.
