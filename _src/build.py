@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Builds the Dragon Ball Z themed SVG panels around the banner in the profile README.
+"""Builds the Dragon Ball themed SVG panels of the profile README, in two themes.
 
 Edit PROFILE below, then run:
 
-    pip install fonttools
+    pip install fonttools pillow
     python _src/build.py
 
-Every SVG in ../assets is regenerated (the banner, assets/banner.gif, is left
-alone). Text is converted to vector outlines (Barlow Condensed + JetBrains Mono,
-both OFL — see _src/fonts), so it looks the same on every device without
-loading any fonts. Only original motifs are drawn here: scouter readouts, a
-dragon radar, ki auras and star orbs. No official artwork is used.
+Every panel is written twice, to assets/black/ (README.md, the live profile) and
+assets/white/ (README-white.md, a sand-coloured alternative). The images the
+panels use live in assets/source/ and are embedded into the SVGs at build time,
+because GitHub shows README images in a sandbox that cannot load anything else.
+Text is converted to vector outlines (Barlow Condensed + JetBrains Mono, both OFL;
+see _src/fonts), so it looks the same on every device without loading fonts.
 """
+import base64
 import html
+import io
 import math
 import random
 from pathlib import Path
@@ -20,32 +23,36 @@ from pathlib import Path
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.ttLib import TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
+from PIL import Image, ImageSequence
 
 SRC = Path(__file__).resolve().parent
-OUT = SRC.parent / "assets"
+ASSETS = SRC.parent / "assets"
+IMG = ASSETS / "source"
 
 # ---------------------------------------------------------------- content ---
 PROFILE = {
     "name": "SUNDAYS",
     "handle": "DEANYADID09-CMYK",
-    "url": "GITHUB.COM/DEANYADID09-CMYK",
-    # Cycles above the name in the identity panel.
     "roles": ["PRODUCT BUILDER", "AI SYSTEMS", "AUTOMATION"],
     "tagline": "BUILD SYSTEMS. SHIP FAST. KEEP TRAINING.",
     "power": "9,001+",
-    # (label, line) rows of the Saiyan file; the motto closes it.
-    "file": [
-        ("MISSION", "DealEngine: a CRM and deal flow system."),
-        ("STATUS", "Active build. A focused operating layer for modern deal flow."),
-        ("TRAINING", "Agent architecture, automation and product systems."),
-    ],
-    "motto": "BUILD SYSTEMS. SHIP FAST. KEEP TRAINING.",
-    # (name, detail, panel art: "orb" | "beam" | "graph")
+    # (label, value) rows of the scouter readout beside the name.
+    "scouter": [("FIGHTER", "DEANYADID09-CMYK"), ("CLASS", "BUILDER"), ("STATUS", "TRAINING")],
+    # The current mission: the name is split so the second half lights up.
+    "mission": {
+        "name": ("DEAL", "ENGINE"),
+        "lead": "A CRM and deal flow system.",
+        "detail": "A focused operating layer for Draw Forward LLC.",
+        "status": "ACTIVE BUILD",
+        "button": "VIEW MISSION",
+    },
+    # (name, detail, looping clip in assets/source/techniques)
     "techniques": [
-        ("AGENT ARCHITECTURE", "REASON · ROUTE · EXECUTE", "graph"),
-        ("AUTOMATION", "REPETITIVE WORK → LEVERAGE", "beam"),
-        ("PRODUCT SYSTEMS", "INTERFACES PEOPLE RUN WITH", "orb"),
+        ("AGENT ARCHITECTURE", "REASON · ROUTE · EXECUTE", "technique-1-agent-architecture.gif", (.5, .4)),
+        ("AUTOMATION", "REPETITIVE WORK → LEVERAGE", "technique-2-automation.gif", (.45, .5)),
+        ("PRODUCT SYSTEMS", "INTERFACES PEOPLE RUN WITH", "technique-3-product-systems.gif", (.46, .4)),
     ],
+    "techniques_note": "TRAINING // AGENTS · AUTOMATION · PRODUCT",
     "arsenal": ["REACT", "JAVASCRIPT", "VITE", "TAILWIND", "MUI", "FRAMER MOTION", "GITHUB", "AI WORKFLOWS"],
     "ticker": [
         "SUNDAYS — PRODUCT BUILDER · AI SYSTEMS · AUTOMATION",
@@ -54,18 +61,44 @@ PROFILE = {
         "POWER LEVEL: 9,001+",
     ],
     "ticker_buttons": ["REPOSITORIES", "FOLLOW"],
-    "footer": {
-        "left": "© 2026 SUNDAYS",
-        "mid": "TO BE CONTINUED",
-    },
+    "footer": {"left": "© 2026 SUNDAYS & SATURDAYS", "right": "TO BE CONTINUED"},
 }
 
-# ------------------------------------------------------------------ style ---
-# Gi orange, ki gold, Saiyan blue, scouter green on a near-black night sky.
+# ----------------------------------------------------------------- themes ---
+# Black: gi orange and ki gold on a night sky. White: the same, on warm sand.
+THEMES = {
+    "black": dict(
+        BG="#09070A", PANEL="#120D0B", PANEL2="#1C140E", LINE="#3A2818", TILE="#0C0907",
+        ORANGE="#FF8A1F", GOLD="#FFD23F", GREEN="#5CFF7A", RED="#E8352C",
+        TEXT="#FFF3E3", MUTED="#B59C84", DIM="#6E5A47",
+        ON_ORANGE="#09070A", BTN_BG="#1C140E", BTN_FG="#FFF3E3", TICK_BG="#09070A",
+        CARD="#0E0A09", CARD_ALPHA=(.42, .68), EDGE="#FFD23F", EDGE_ALPHA=.35,
+        HALO=("#FFD23F", ".55"), GRID_VEIL=.55, GLOW=True,
+    ),
+    "white": dict(
+        BG="#F1E4CC", PANEL="#F6ECDA", PANEL2="#EADBC0", LINE="#D9C4A0", TILE="#FBF5EA",
+        ORANGE="#E2650A", GOLD="#A86F00", GREEN="#1F8F3E", RED="#C8281F",
+        TEXT="#2A1B10", MUTED="#7B634A", DIM="#A08A6E",
+        ON_ORANGE="#FFFFFF", BTN_BG="#2A1B10", BTN_FG="#F6ECDA", TICK_BG="#EADBC0",
+        CARD="#F8EFE0", CARD_ALPHA=(.38, .62), EDGE="#FFFFFF", EDGE_ALPHA=.75,
+        HALO=("#FFF8EB", ".8"), GRID_VEIL=.72, GLOW=False,
+    ),
+}
+
 W = 1000
-BG, PANEL, PANEL2, LINE = "#09070A", "#120D0B", "#1C140E", "#3A2818"
-ORANGE, GOLD, BLUE, GREEN, RED = "#FF8A1F", "#FFD23F", "#4F86FF", "#5CFF7A", "#E8352C"
-TEXT, MUTED, DIM = "#FFF3E3", "#B59C84", "#6E5A47"
+# Theme colours; set_theme() fills these in before each build.
+BG = PANEL = PANEL2 = LINE = TILE = ORANGE = GOLD = GREEN = RED = TEXT = MUTED = DIM = ""
+ON_ORANGE = BTN_BG = BTN_FG = TICK_BG = CARD = EDGE = ""
+CARD_ALPHA = HALO = None
+EDGE_ALPHA = GRID_VEIL = 0.0
+GLOW = False
+OUT = ASSETS
+
+
+def set_theme(name):
+    globals().update(THEMES[name])
+    globals()["OUT"] = ASSETS / name
+
 
 BASE_CSS = """
 .rise{animation:rise 1.2s cubic-bezier(.16,1,.3,1) both}
@@ -181,8 +214,8 @@ class SVG:
         return fid
 
     def card_path(self):
-        # Ticker rounds the top, footer the bottom; together with the square
-        # banner in between they read as one screen.
+        # Ticker rounds the top, footer the bottom; the panels in between are
+        # square, so the stack reads as one screen.
         h, r = self.h, 14
         if self.corners == "top":
             return f"M0 {h}V{r}A{r} {r} 0 0 1 {r} 0H{W - r}A{r} {r} 0 0 1 {W} {r}V{h}Z"
@@ -200,17 +233,98 @@ class SVG:
                 f'{"".join(self.body)}</g></svg>')
 
     def save(self):
+        OUT.mkdir(parents=True, exist_ok=True)
         path = OUT / f"{self.name}.svg"
         path.write_text(self.render(), encoding="utf-8")
-        print(f"  {path.name:16} {path.stat().st_size / 1024:6.1f} KB")
+        print(f"  {OUT.name}/{path.name:16} {path.stat().st_size / 1024:7.1f} KB")
+
+
+# ----------------------------------------------------------------- images ---
+_cache = {}
+
+
+def data_uri(key, make):
+    """Encode an image once and reuse it for both themes."""
+    if key not in _cache:
+        mime, raw = make()
+        _cache[key] = f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+    return _cache[key]
+
+
+def jpeg(im, quality=80):
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, "JPEG", quality=quality, optimize=True, progressive=True)
+    return "image/jpeg", buf.getvalue()
+
+
+def png(im, colors=None):
+    if colors:
+        im = im.quantize(colors, method=Image.Quantize.FASTOCTREE)
+    buf = io.BytesIO()
+    im.save(buf, "PNG", optimize=True)
+    return "image/png", buf.getvalue()
+
+
+def banner_uri():
+    def make():
+        im = Image.open(IMG / "banner-goku-vegeta.png")
+        return jpeg(im.resize((1600, 900), Image.LANCZOS), 80)
+    return data_uri("banner", make)
+
+
+def dome_uri(px):
+    """The radar's green screen, cut from the reference frame (the case is drawn)."""
+    def make():
+        im = Image.open(IMG / "dragon-radar-reference.png")
+        cx, cy, r = 607, 332, 189
+        return jpeg(im.crop((cx - r, cy - r, cx + r, cy + r)).resize((px, px), Image.LANCZOS), 84)
+    return data_uri(("dome", px), make)
+
+
+def orb_uri(stars, px):
+    def make():
+        im = Image.open(IMG / "orbs" / f"orb-{stars}-star.png").convert("RGBA")
+        return png(im.resize((px, px), Image.LANCZOS), 128)
+    return data_uri(("orb", stars, px), make)
+
+
+def sprite(filename, px, focus):
+    """A looping clip as a vertical strip of square frames, plus its loop length.
+
+    GIFs inside an SVG image do not reliably animate, so the frames are stacked
+    into one JPEG and stepped through with CSS instead.
+    """
+    def make():
+        gif = Image.open(IMG / "techniques" / filename)
+        frames, durs = [], []
+        for fr in ImageSequence.Iterator(gif):
+            frames.append(fr.convert("RGB"))
+            durs.append(fr.info.get("duration", 100) or 100)
+        step = 2 if sum(durs) / len(durs) < 60 else 1  # very fast clips keep every other frame
+        frames, durs = frames[::step], [sum(durs[i:i + step]) for i in range(0, len(durs), step)]
+        w, h = frames[0].size
+        s = min(w, h)
+        x0 = round((w - s) * focus[0])
+        y0 = round((h - s) * focus[1])
+        strip = Image.new("RGB", (px, px * len(frames)))
+        for i, fr in enumerate(frames):
+            strip.paste(fr.crop((x0, y0, x0 + s, y0 + s)).resize((px, px), Image.LANCZOS), (0, i * px))
+        mime, raw = jpeg(strip, 74)
+        sprite.meta[filename] = (len(frames), sum(durs) / 1000)
+        return mime, raw
+    uri = data_uri(("sprite", filename, px), make)
+    return uri, sprite.meta[filename]
+
+
+sprite.meta = {}
 
 
 # ---------------------------------------------------------------- helpers ---
-def wrap(font, text, size, maxw):
+def wrap(font, text, size, maxw, ls=0.0):
     lines, cur = [], ""
     for word in text.split():
         trial = f"{cur} {word}".strip()
-        if cur and font.width(trial, size) > maxw:
+        if cur and font.width(trial, size, ls) > maxw:
             lines.append(cur)
             cur = word
         else:
@@ -223,124 +337,46 @@ def fit(font, lines, maxw, maxsize, ls_em=0.0):
     return min(maxsize, size)
 
 
-def headline(d, lines, x, y, size, fill, anchor="start", delay=0.1, step=0.12, lh=0.86, glow=None):
-    """Big condensed caps that rise into place line by line, with an optional ki glow."""
-    ls = -0.01 * size
-    fid = d.glow_filter(size / 14) if glow else None
-    for i, line in enumerate(lines):
-        base = y + i * size * lh
-        cid = d.clip_rect(0, base - size * 1.1, W, size * 1.4)
-        t = d.text(x, base, line, BOLD, size, fill, anchor, ls)
-        halo = (f'<g filter="url(#{fid})" opacity=".55">{d.text(x, base, line, BOLD, size, glow, anchor, ls)}</g>'
-                if glow else "")
-        d.add(f'<g clip-path="url(#{cid})"><g class="rise" style="animation-delay:{delay + i * step:.2f}s">'
-              f'{halo}{t}</g></g>')
-    return y + (len(lines) - 1) * size * lh
-
-
-def bracket(d, x, y, label, fill=MUTED, size=12, anchor="start"):
-    d.add(d.text(x, y, f"[ {label} ]", MONO_B, size, fill, anchor, ls=0.5))
-
-
-def hud_corners(d, x, y, w, h, arm=18, color=GREEN):
-    """Scouter targeting brackets at each corner of a box."""
-    pts = [(x, y, 1, 1), (x + w, y, -1, 1), (x, y + h, 1, -1), (x + w, y + h, -1, -1)]
-    path = "".join(f"M{cx + sx * arm} {cy}H{cx}V{cy + sy * arm}" for cx, cy, sx, sy in pts)
-    d.add(f'<path d="{path}" fill="none" stroke="{color}" stroke-width="2" opacity=".75"/>')
-
-
-def scanlines(d, x, y, w, h, band=True, color=GREEN):
-    """Scouter-lens scanlines plus a slow sweep of light."""
-    pid = d.uid("scan")
-    d.defs.append(f'<pattern id="{pid}" width="4" height="4" patternUnits="userSpaceOnUse">'
-                  f'<rect width="4" height="1" fill="#fff" opacity=".035"/></pattern>')
-    d.add(f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="url(#{pid})"/>')
-    if band:
-        gid, name = d.uid("band"), d.uid("sweep")
-        d.defs.append(f'<linearGradient id="{gid}" x1="0" y1="0" x2="0" y2="1">'
-                      f'<stop offset="0" stop-color="{color}" stop-opacity="0"/>'
-                      f'<stop offset=".5" stop-color="{color}" stop-opacity=".06"/>'
-                      f'<stop offset="1" stop-color="{color}" stop-opacity="0"/></linearGradient>')
-        d.css.append(f".{name}{{animation:{name} 6s linear infinite}}"
-                     f"@keyframes {name}{{from{{transform:translateY(-120px)}}to{{transform:translateY({h + 120:.0f}px)}}}}")
-        cid = d.clip_rect(x, y, w, h)
-        d.add(f'<g clip-path="url(#{cid})"><rect x="{x:g}" y="{y:g}" width="{w:g}" height="120" '
-              f'fill="url(#{gid})" class="{name}"/></g>')
+def bracket(d, x, y, label, size=13):
+    d.add(d.text(x, y, f"[ {label} ]", MONO_B, size, GREEN, ls=0.6))
 
 
 def grid(d, x, y, w, h, step=40):
     pid = d.uid("grid")
     d.defs.append(f'<pattern id="{pid}" width="{step}" height="{step}" patternUnits="userSpaceOnUse" '
                   f'x="{x:g}" y="{y:g}"><path d="M{step} 0H0V{step}" fill="none" stroke="{LINE}" '
-                  f'stroke-width="1" opacity=".45"/></pattern>')
-    d.add(f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="url(#{pid})"/>')
+                  f'stroke-width="1"/></pattern>')
+    d.add(f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="{PANEL}"/>'
+          f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="url(#{pid})"/>'
+          f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" fill="{PANEL}" opacity="{GRID_VEIL}"/>')
 
 
-def star_path(cx, cy, r_out, r_in, n=5, rot=-90):
-    pts = []
-    for i in range(n * 2):
-        r = r_out if i % 2 == 0 else r_in
-        a = math.radians(rot + i * 180 / n)
-        pts.append(f"{cx + r * math.cos(a):.1f} {cy + r * math.sin(a):.1f}")
-    return "M" + "L".join(pts) + "Z"
+def status_dot(d, x, y, color):
+    return (f'<g class="blink"><circle cx="{x}" cy="{y}" r="4" fill="{color}"/>'
+            f'<circle cx="{x}" cy="{y}" r="8" fill="{color}" opacity=".25"/></g>')
 
 
-# Star positions inside an orb, as fractions of its radius, for 1 to 7 stars.
-STAR_LAYOUT = {
-    1: [(0, 0)],
-    2: [(-.3, -.15), (.3, .15)],
-    3: [(0, -.32), (-.3, .2), (.3, .2)],
-    4: [(-.28, -.28), (.28, -.28), (-.28, .28), (.28, .28)],
-    5: [(0, -.38), (-.36, -.08), (.36, -.08), (-.22, .34), (.22, .34)],
-    6: [(-.3, -.34), (.3, -.34), (-.4, 0), (.4, 0), (-.3, .34), (.3, .34)],
-    7: [(0, 0), (0, -.42), (0, .42), (-.38, -.2), (.38, -.2), (-.38, .2), (.38, .2)],
-}
-
-
-def orb(d, cx, cy, r, stars=4, glow=False):
-    """An original star orb: a glossy orange sphere with red stars inside."""
-    gid = d.uid("orb")
-    d.defs.append(f'<radialGradient id="{gid}" cx=".38" cy=".32" r=".75">'
-                  f'<stop offset="0" stop-color="#FFE3A3"/><stop offset=".35" stop-color="{GOLD}"/>'
-                  f'<stop offset=".75" stop-color="{ORANGE}"/><stop offset="1" stop-color="#B24A08"/>'
-                  f'</radialGradient>')
-    sr = r * (0.22 if stars > 4 else 0.28)
-    starp = "".join(f'<path d="{star_path(cx + fx * r, cy + fy * r, sr, sr * .42)}"/>'
-                    for fx, fy in STAR_LAYOUT[stars])
-    halo = ""
-    if glow:
-        halo = (f'<circle cx="{cx}" cy="{cy}" r="{r * 1.25:.1f}" fill="{ORANGE}" opacity=".5" '
-                f'filter="url(#{d.glow_filter(r / 2.5)})"/>')
-    return (f'{halo}<circle cx="{cx}" cy="{cy}" r="{r}" fill="url(#{gid})"/>'
-            f'<g fill="{RED}">{starp}</g>'
-            f'<ellipse cx="{cx - r * .32:.1f}" cy="{cy - r * .38:.1f}" rx="{r * .3:.1f}" ry="{r * .16:.1f}" '
-            f'fill="#fff" opacity=".55" transform="rotate(-30 {cx - r * .32:.1f} {cy - r * .38:.1f})"/>')
-
-
-def status_dot(d, x, y, color=GREEN):
-    d.add(f'<g class="blink"><circle cx="{x}" cy="{y}" r="4" fill="{color}"/>'
-          f'<circle cx="{x}" cy="{y}" r="8" fill="{color}" opacity=".25"/></g>')
-
-
-def ki_particles(d, x, y, w, h, n, seed, color=GOLD):
-    """Sparks of ki drifting upward out of an aura."""
-    rng = random.Random(seed)
-    d.css.append(".kp{animation:kp linear infinite both}"
-                 "@keyframes kp{0%{opacity:0;transform:translateY(0)}15%{opacity:.9}"
-                 "100%{opacity:0;transform:translateY(-120px)}}")
-    out = []
-    for _ in range(n):
-        px, py = x + rng.uniform(0, w), y + rng.uniform(h * .3, h)
-        out.append(f'<rect x="{px:.0f}" y="{py:.0f}" width="2" height="{rng.uniform(6, 14):.0f}" rx="1" '
-                   f'fill="{color}" class="kp" style="animation-duration:{rng.uniform(1.6, 3.2):.2f}s;'
-                   f'animation-delay:{rng.uniform(0, 3):.2f}s"/>')
+def pill(d, x, y, label, h=34, fg=None, bg=None, stroke=None, dot=None):
+    """A rounded label; returns its width."""
+    fg, bg, stroke = fg or TEXT, bg or TILE, stroke or LINE
+    pad = 16
+    tw = MONO_B.width(label, 13, 0.8)
+    w = tw + pad * 2 + (18 if dot else 0)
+    out = [f'<rect x="{x:.1f}" y="{y}" width="{w:.1f}" height="{h}" rx="{h / 2}" fill="{bg}" stroke="{stroke}"/>']
+    tx = x + pad
+    if dot:
+        out.append(status_dot(d, tx + 4, y + h / 2, dot))
+        tx += 18
+    out.append(d.text(tx, y + h / 2 + 4.6, label, MONO_B, 13, fg, ls=0.8))
     d.add("".join(out))
+    return w
 
 
 # --------------------------------------------------------------- sections ---
 def ticker():
     H = 46
     d = SVG("ticker", H, "Scouter feed: " + " / ".join(PROFILE["ticker"]), corners="top")
+    d.add(f'<rect width="{W}" height="{H}" fill="{TICK_BG}"/>')
     size = 12
     labels = PROFILE["ticker_buttons"]
     arrow = MONO_B.width("→ ", size) + 6
@@ -362,340 +398,362 @@ def ticker():
                  f"@keyframes mq{{to{{transform:translateX(-{period:.1f}px)}}}}")
     cid = d.clip_rect(0, 0, area, H)
     d.add(f'<g clip-path="url(#{cid})"><g transform="translate(22 0)"><g class="mq">{group}</g></g></g>')
-    d.add(f'<rect x="{area:g}" y="0" width="{dark_w:g}" height="{H}" fill="{PANEL2}"/>')
-    d.add(d.text(area + 20, H / 2 + 4.6, labels[0], MONO_B, size, TEXT, ls=0.6))
+    d.add(f'<rect x="{area:g}" y="0" width="{dark_w:g}" height="{H}" fill="{BTN_BG}"/>')
+    d.add(d.text(area + 20, H / 2 + 4.6, labels[0], MONO_B, size, BTN_FG, ls=0.6))
     bx = area + dark_w
     d.add(f'<rect x="{bx:g}" y="0" width="{lit_w:g}" height="{H}" fill="{ORANGE}"/>')
     d.css.append(".nudge{animation:nudge 1.6s ease-in-out infinite}@keyframes nudge{50%{transform:translateX(4px)}}")
-    d.add(f'<g class="nudge">{d.text(bx + 20, H / 2 + 4.6, "→", MONO_B, size, BG)}</g>')
-    d.add(d.text(bx + 20 + arrow, H / 2 + 4.6, labels[1], MONO_B, size, BG, ls=0.6))
+    d.add(f'<g class="nudge">{d.text(bx + 20, H / 2 + 4.6, "→", MONO_B, size, ON_ORANGE)}</g>')
+    d.add(d.text(bx + 20 + arrow, H / 2 + 4.6, labels[1], MONO_B, size, ON_ORANGE, ls=0.6))
     d.add(f'<rect y="{H - 1}" width="{W}" height="1" fill="{LINE}"/>')
     d.save()
 
 
+def fight(d, ih):
+    """The banner art, alive: a slow push-in, speed lines, and a punch landing every few seconds."""
+    ix, iy = 318, 318  # where the fist meets the face
+    rng = random.Random(9)
+    d.css.append(
+        f".zoom{{transform-origin:{ix}px {iy}px;animation:zoom 9s ease-in-out infinite alternate}}"
+        "@keyframes zoom{from{transform:scale(1.02)}to{transform:scale(1.09)}}"
+        ".shake{animation:shake 3.2s linear infinite}"
+        "@keyframes shake{0%,78%,92%,100%{transform:translate(0,0)}80%{transform:translate(-9px,5px)}"
+        "82%{transform:translate(7px,-6px)}84%{transform:translate(-5px,3px)}86%{transform:translate(4px,-2px)}"
+        "88%{transform:translate(-2px,1px)}}"
+        ".flash{animation:flash 3.2s linear infinite}"
+        "@keyframes flash{0%,78%{opacity:0}80%{opacity:.85}90%,100%{opacity:0}}"
+        f".ring{{transform-origin:{ix}px {iy}px;animation:ring 3.2s ease-out infinite}}"
+        "@keyframes ring{0%,79%{transform:scale(.1);opacity:0}80%{opacity:.9}100%{transform:scale(2.6);opacity:0}}"
+        ".kiaura{animation:kiaura .5s steps(2) infinite}@keyframes kiaura{50%{opacity:.35}}"
+        ".sl{animation:sl linear infinite}@keyframes sl{to{stroke-dashoffset:-1400}}"
+        ".pt{animation:pt linear infinite}"
+        "@keyframes pt{from{transform:translate(0,0);opacity:0}10%{opacity:1}to{transform:translate(-700px,-255px);opacity:0}}")
+    d.defs.append(
+        '<radialGradient id="fl"><stop offset="0" stop-color="#fff"/>'
+        '<stop offset=".35" stop-color="#FFF4C8" stop-opacity=".85"/>'
+        '<stop offset="1" stop-color="#FFD23F" stop-opacity="0"/></radialGradient>'
+        '<radialGradient id="au"><stop offset="0" stop-color="#FF2A14" stop-opacity=".3"/>'
+        '<stop offset="1" stop-color="#FF2A14" stop-opacity="0"/></radialGradient>'
+        f'<linearGradient id="fadeb" x1="0" y1="0" x2="0" y2="1"><stop offset=".5" stop-color="{BG}" stop-opacity="0"/>'
+        f'<stop offset=".85" stop-color="{BG}" stop-opacity=".7"/><stop offset="1" stop-color="{BG}"/></linearGradient>'
+        '<filter id="mb" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="60"/></filter>'
+        '<mask id="calm"><rect x="-200" y="-200" width="1400" height="1000" fill="#fff"/>'
+        '<ellipse cx="560" cy="250" rx="330" ry="200" fill="#000" filter="url(#mb)"/></mask>')
+    lines = []
+    for _ in range(46):
+        off = rng.uniform(-620, 620)
+        lines.append(f'<line x1="-900" y1="{off:.0f}" x2="900" y2="{off:.0f}" stroke="#fff" '
+                     f'stroke-width="{rng.choice([1, 1.5, 2, 2, 3, 4])}" '
+                     f'stroke-dasharray="{rng.uniform(80, 260):.0f} {rng.uniform(300, 900):.0f}" '
+                     f'stroke-linecap="round" opacity="{rng.uniform(.25, .7):.2f}" class="sl" '
+                     f'style="animation-duration:{rng.uniform(.45, 1.1):.2f}s;animation-delay:-{rng.uniform(0, 1):.2f}s"/>')
+    sparks = "".join(
+        f'<circle cx="{rng.uniform(500, 1100):.0f}" cy="{rng.uniform(150, 650):.0f}" r="{rng.uniform(1.5, 3.5):.1f}" '
+        f'fill="{rng.choice(["#FFF2C2", "#FFD23F", "#FF6A3D"])}" class="pt" '
+        f'style="animation-duration:{rng.uniform(1.6, 3.2):.2f}s;animation-delay:-{rng.uniform(0, 3):.2f}s"/>'
+        for _ in range(26))
+    cid = d.clip_rect(0, 0, W, ih)
+    d.add(f'<g clip-path="url(#{cid})"><g class="shake"><g class="zoom">'
+          f'<image href="{banner_uri()}" x="-10" y="-6" width="{W + 20}" height="{(W + 20) * 9 / 16:.1f}"/>'
+          f'<ellipse cx="820" cy="420" rx="260" ry="200" fill="url(#au)" class="kiaura"/>'
+          f'<g style="mix-blend-mode:screen" mask="url(#calm)"><g transform="translate(560 300) rotate(20)">'
+          f'{"".join(lines)}</g></g></g></g>'
+          f'<g style="mix-blend-mode:screen">{sparks}</g>'
+          f'<circle cx="{ix}" cy="{iy}" r="150" fill="url(#fl)" class="flash"/>'
+          f'<circle cx="{ix}" cy="{iy}" r="60" fill="none" stroke="#FFF4C8" stroke-width="6" class="ring"/>'
+          f'<rect width="{W}" height="{ih}" fill="url(#fadeb)"/></g>')
+
+
 def hero():
-    """Saiyan identity under the banner: roles, name in a ki aura, power level."""
-    H = 440
+    """The fight banner with the Saiyan ID card resting over its lower edge."""
     p = PROFILE
-    roles = ", ".join(r.lower() for r in p["roles"])
-    d = SVG("hero", H, f"{p['name']}: {roles}. {p['tagline'].capitalize()} Power level {p['power']}.")
-    px, py, pw, ph = 12, 12, W - 24, H - 24
-    d.add(f'<rect x="{px}" y="{py}" width="{pw}" height="{ph}" fill="{PANEL}"/>')
-    grid(d, px, py, pw, ph)
-    pool = d.uid("pool")
-    d.defs.append(f'<radialGradient id="{pool}" cx=".5" cy=".55" r=".55">'
-                  f'<stop offset="0" stop-color="{ORANGE}" stop-opacity=".18"/>'
-                  f'<stop offset="1" stop-color="{ORANGE}" stop-opacity="0"/></radialGradient>')
-    d.add(f'<rect x="{px}" y="{py}" width="{pw}" height="{ph}" fill="url(#{pool})"/>')
-    scanlines(d, px, py, pw, ph)
-    d.add(f'<rect x="{px + .5}" y="{py + .5}" width="{pw - 1}" height="{ph - 1}" fill="none" stroke="{LINE}"/>')
-    hud_corners(d, 32, 32, W - 64, H - 64)
+    ih = round(W * 9 / 16)
+    cx0, cx1, ctop, H = 26, W - 26, 376, 708
+    d = SVG("hero", H, f"{p['name']}: {', '.join(r.lower() for r in p['roles'])}. "
+            f"{p['tagline'].capitalize()} Power level {p['power']}.")
+    fight(d, ih)
 
-    bracket(d, 56, 70, "SAIYAN ID", GREEN)
-    d.add(d.text(W - 56, 70, f"FIGHTER ID // {p['handle']}", MONO_B, 12, MUTED, "end", 0.5))
+    # The card: see-through at the top, fading into the page at the bottom.
+    a0, a1 = CARD_ALPHA
+    d.defs.append(f'<linearGradient id="cardg" x1="0" y1="0" x2="0" y2="1">'
+                  f'<stop offset="0" stop-color="{CARD}" stop-opacity="{a0}"/>'
+                  f'<stop offset=".6" stop-color="{CARD}" stop-opacity="{a1}"/>'
+                  f'<stop offset="1" stop-color="{BG}"/></linearGradient>'
+                  f'<linearGradient id="edgeg" x1="0" y1="0" x2="0" y2="1">'
+                  f'<stop offset="0" stop-color="{EDGE}" stop-opacity="{EDGE_ALPHA}"/>'
+                  f'<stop offset=".75" stop-color="{EDGE}" stop-opacity="0"/></linearGradient>')
+    r = 14
+    shape = (f"M{cx0} {H}V{ctop + r}A{r} {r} 0 0 1 {cx0 + r} {ctop}H{cx1 - r}"
+             f"A{r} {r} 0 0 1 {cx1} {ctop + r}V{H}")
+    d.add(f'<rect x="{cx0}" y="{ih}" width="{cx1 - cx0}" height="{H - ih}" fill="{BG}"/>')
+    d.add(f'<path d="{shape}Z" fill="url(#cardg)"/>')
+    d.add(f'<path d="{shape}" fill="none" stroke="url(#edgeg)" stroke-width="1.5"/>')
 
-    cx = W / 2
-    d.add(f'<g class="fade">{orb(d, cx, 104, 18, stars=4, glow=True)}</g>')
-    # Roles take turns sliding through a slot above the name.
-    n, hold = len(p["roles"]), 3
-    cycle = n * hold
-    step = 100 / n
-    d.css.append(f".role{{animation:role {cycle}s cubic-bezier(.16,1,.3,1) infinite both}}"
-                 f"@keyframes role{{0%{{transform:translateY(34px);opacity:0}}"
-                 f"{step * .15:.1f}%,{step * .85:.1f}%{{transform:translateY(0);opacity:1}}"
-                 f"{step:.1f}%,100%{{transform:translateY(-34px);opacity:0}}}}")
-    cid = d.clip_rect(0, 128, W, 42)
-    slots = "".join(d.text(cx, 160, role, MED, 30, GOLD, "middle", 4, cls="role",
-                           style=f"animation-delay:{i * hold}s") for i, role in enumerate(p["roles"]))
-    d.add(f'<g clip-path="url(#{cid})">{slots}</g>')
+    x = 70
+    d.add(f'<g class="up" style="animation-delay:.2s">')
+    bracket(d, x, ctop + 50, "SAIYAN ID")
+    d.add("</g>")
+    size = fit(BOLD, [p["name"]], 560, 150, -0.01)
+    base = ctop + 60 + size * 0.74
+    ls = -0.01 * size
+    halo_col, halo_op = HALO
+    if GLOW:
+        aura = d.glow_filter(size / 7)
+        d.css.append(".aura{transform-box:fill-box;transform-origin:50% 70%;animation:aura 1.4s ease-in-out infinite}"
+                     "@keyframes aura{0%,100%{opacity:.3;transform:scale(1)}50%{opacity:.6;transform:scale(1.03,1.07)}}")
+        d.add(f'<g filter="url(#{aura})"><g class="aura">{d.text(x - 4, base, p["name"], BOLD, size, ORANGE, ls=ls)}</g></g>')
+    halo = d.glow_filter(size / 14)
+    d.add(f'<g class="up" style="animation-delay:.3s"><g filter="url(#{halo})" opacity="{halo_op}">'
+          f'{d.text(x - 4, base, p["name"], BOLD, size, halo_col, ls=ls)}</g>'
+          f'{d.text(x - 4, base, p["name"], BOLD, size, TEXT, ls=ls)}</g>')
+    roles = " · ".join(p["roles"])
+    rsize = fit(MED, [roles], 560, 27, 0.1)
+    d.add(d.text(x, base + 52, roles, MED, rsize, GOLD, ls=rsize * 0.1, cls="up", style="animation-delay:.5s"))
+    tag = p["tagline"]
+    tw = MONO_B.width(tag, 15, 0.9)
+    d.add(d.text(x, base + 96, tag, MONO_B, 15, MUTED if GLOW else TEXT, ls=0.9, cls="up", style="animation-delay:.6s"))
+    d.add(f'<rect x="{x + tw + 10:.1f}" y="{base + 82}" width="10" height="17" fill="{GREEN}" class="blink"/>')
 
-    # The name, wrapped in a flickering ki aura.
-    size = fit(BOLD, [p["name"]], 760, 176, -0.01)
-    base_y = 178 + size * 0.72
-    aura = d.glow_filter(size / 6)
-    d.css.append(".aura{transform-box:fill-box;transform-origin:50% 70%;animation:aura 1.4s ease-in-out infinite}"
-                 "@keyframes aura{0%,100%{opacity:.35;transform:scale(1)}50%{opacity:.75;transform:scale(1.04,1.08)}}"
-                 ".aura2{animation-duration:.9s;animation-delay:.3s}")
-    for cls, col in (("aura", GOLD), ("aura aura2", ORANGE)):
-        d.add(f'<g filter="url(#{aura})"><g class="{cls}">'
-              f'{d.text(cx, base_y, p["name"], BOLD, size, col, "middle", -0.01 * size)}</g></g>')
-    ki_particles(d, cx - 380, base_y - size * 0.9, 760, size, 34, seed=7)
-    base = headline(d, [p["name"]], cx, base_y, size, TEXT, "middle", delay=0.15, glow=GOLD)
-
-    sub = p["tagline"]
-    sw = MONO_B.width(sub, 13, 0.8)
-    d.add(d.text(cx - 8, base + 50, sub, MONO_B, 13, MUTED, "middle", 0.8, cls="up", style="animation-delay:.6s"))
-    d.add(f'<rect x="{cx - 8 + sw / 2 + 8:.1f}" y="{base + 38}" width="9" height="15" fill="{GREEN}" class="blink"/>')
-
-    status_dot(d, 60, H - 57)
-    d.add(d.text(76, H - 52, f"POWER LEVEL // {p['power']}", MONO_B, 12, GREEN, ls=0.5))
-    d.add(d.text(W - 56, H - 52, "SCOUTER: LOCKED", MONO_B, 12, MUTED, "end", 0.5))
+    # Scouter readout.
+    sx, sy, sw, sh = 664, ctop + 56, 270, 222
+    d.add(f'<g class="up" style="animation-delay:.45s">'
+          f'<rect x="{sx}" y="{sy}" width="{sw}" height="{sh}" rx="8" fill="{CARD}" fill-opacity="{a0 * .55:.2f}" '
+          f'stroke="{EDGE}" stroke-opacity="{EDGE_ALPHA * .9:.2f}"/>')
+    d.add(d.text(sx + 20, sy + 34, "SCOUTER // READING", MONO_B, 13, MUTED, ls=0.8))
+    psize = 64
+    if GLOW:
+        pf = d.glow_filter(8)
+        d.add(f'<g filter="url(#{pf})" opacity=".6">{d.text(sx + 18, sy + 100, p["power"], BOLD, psize, GREEN)}</g>')
+    d.add(d.text(sx + 18, sy + 100, p["power"], BOLD, psize, GREEN))
+    bw = sw - 40
+    d.css.append(".charge{animation:charge 2.4s cubic-bezier(.16,1,.3,1) both}"
+                 "@keyframes charge{from{transform:scaleX(0)}}")
+    d.add(f'<rect x="{sx + 20}" y="{sy + 118}" width="{bw}" height="9" rx="4.5" fill="{GREEN}" opacity=".18"/>'
+          f'<rect x="{sx + 20}" y="{sy + 118}" width="{bw * .92:.0f}" height="9" rx="4.5" fill="{GREEN}" '
+          f'class="charge" style="transform-origin:{sx + 20}px 0"/>')
+    for i, (k, v) in enumerate(p["scouter"]):
+        yy = sy + 156 + i * 24
+        d.add(d.text(sx + 20, yy, k, MONO_B, 12, MUTED, ls=0.8))
+        d.add(d.text(sx + sw - 20, yy, v, MONO_B, 12, GREEN if k == "STATUS" else TEXT, "end", 0.8))
+    d.add("</g>")
     d.save()
 
 
-def art_orb(d, x, y, w, h):
-    """A ki ball charging: a pulsing core inside spinning rings of energy."""
-    cx, cy = x + w / 2, y + h / 2
-    d.css.append(".charge{transform-box:fill-box;transform-origin:center;animation:charge 1.2s ease-in-out infinite}"
-                 "@keyframes charge{50%{transform:scale(1.18)}}"
-                 ".spin{transform-box:fill-box;transform-origin:center;animation:spin 3s linear infinite}"
-                 "@keyframes spin{to{transform:rotate(360deg)}}")
-    rings = "".join(f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="{r}" fill="none" stroke="{GOLD}" '
-                    f'stroke-width="2" stroke-dasharray="{r * .9:.0f} {r * .6:.0f}" opacity="{o}"/>'
-                    for r, o in ((44, .5), (32, .8)))
-    return (f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="34" fill="{ORANGE}" opacity=".5" '
-            f'filter="url(#{d.glow_filter(12)})" class="charge"/>'
-            f'<g class="spin">{rings}</g>'
-            f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="18" fill="{GOLD}" class="charge"/>'
-            f'<circle cx="{cx:.0f}" cy="{cy:.0f}" r="9" fill="#FFF8E0"/>')
-
-
-def art_beam(d, x, y, w, h):
-    """An energy beam firing across the screen from a charged hand-height orb."""
-    cy = y + h / 2
-    x0, x1 = x + 34, x + w - 18
-    d.css.append(".beam{stroke-dasharray:40 18;animation:beam .6s linear infinite}"
-                 "@keyframes beam{to{stroke-dashoffset:-58}}"
-                 ".fire{transform-box:fill-box;transform-origin:left center;animation:fire 2.4s cubic-bezier(.6,0,.2,1) infinite}"
-                 "@keyframes fire{0%,10%{transform:scaleX(0)}45%,85%{transform:scaleX(1)}100%{transform:scaleX(0);opacity:0}}")
-    return (f'<g class="fire">'
-            f'<line x1="{x0}" y1="{cy}" x2="{x1}" y2="{cy}" stroke="{BLUE}" stroke-width="30" stroke-linecap="round" '
-            f'opacity=".55" filter="url(#{d.glow_filter(9)})"/>'
-            f'<line x1="{x0}" y1="{cy}" x2="{x1}" y2="{cy}" stroke="#BFD3FF" stroke-width="14" stroke-linecap="round"/>'
-            f'<line x1="{x0}" y1="{cy}" x2="{x1}" y2="{cy}" stroke="#fff" stroke-width="5" class="beam"/></g>'
-            f'<circle cx="{x0}" cy="{cy}" r="22" fill="{BLUE}" opacity=".6" filter="url(#{d.glow_filter(8)})"/>'
-            f'<circle cx="{x0}" cy="{cy}" r="13" fill="#E6EEFF"/>')
-
-
-def art_graph(d, x, y, w, h):
-    """An agent graph: ki pulses routing between nodes to an output."""
-    pos = [(.16, .3), (.16, .72), (.5, .2), (.5, .5), (.5, .8), (.84, .5)]
-    pts = [(x + w * px, y + h * py) for px, py in pos]
-    edges = [(0, 2), (0, 3), (1, 3), (1, 4), (2, 5), (3, 5), (4, 5)]
-    d.css.append(".flow{stroke-dasharray:3 9;animation:flow 1.2s linear infinite}"
-                 "@keyframes flow{to{stroke-dashoffset:-24}}"
-                 ".pulse{transform-box:fill-box;transform-origin:center;animation:pulse 1.6s ease-in-out infinite}"
-                 "@keyframes pulse{50%{transform:scale(1.35)}}")
-    lines = "".join(f'<line x1="{pts[a][0]:.0f}" y1="{pts[a][1]:.0f}" x2="{pts[b][0]:.0f}" y2="{pts[b][1]:.0f}"/>'
-                    for a, b in edges)
-    nodes = "".join(f'<circle cx="{px:.0f}" cy="{py:.0f}" r="7"/>' for px, py in pts[:-1])
-    ox, oy = pts[-1]
-    return (f'<g stroke="{ORANGE}" stroke-width="1.5" opacity=".35">{lines}</g>'
-            f'<g stroke="{GOLD}" stroke-width="2.5" class="flow">{lines}</g>'
-            f'<g fill="{PANEL}" stroke="{GOLD}" stroke-width="2">{nodes}</g>'
-            f'<circle cx="{ox:.0f}" cy="{oy:.0f}" r="14" fill="{GREEN}" opacity=".25" class="pulse"/>'
-            f'<circle cx="{ox:.0f}" cy="{oy:.0f}" r="8" fill="{GREEN}"/>')
-
-
-ARTS = {"orb": art_orb, "beam": art_beam, "graph": art_graph}
-
-
-def lens(d, x, y, w, h, art, seed, delay):
-    """One scouter lens: scrolling readout, a technique charging up, scanlines."""
-    rng = random.Random(seed)
-    d.add(f'<ellipse cx="{x + w / 2}" cy="{y + h + 26}" rx="{w * 0.45}" ry="10" fill="{ORANGE}" '
-          f'opacity=".18" filter="url(#{d.glow_filter(10)})"/>')
-    d.add(f'<rect x="{x - 7}" y="{y - 7}" width="{w + 14}" height="{h + 14}" rx="6" fill="#0C0907" stroke="{LINE}"/>')
-    sg = d.uid("scr")
-    d.defs.append(f'<linearGradient id="{sg}" x1="0" y1="0" x2="1" y2="1">'
-                  f'<stop offset="0" stop-color="#0E3A1C"/><stop offset="1" stop-color="#061409"/></linearGradient>')
-    cid = d.clip_rect(x, y, w, h, 2)
-    rows_h = 13
-    rows = math.ceil(h / rows_h) + 1
-    period = rows * rows_h
-    bars = []
-    for r in range(rows):
-        indent = rng.choice([0, 0, 14, 14, 28, 42])
-        cx = x + 14 + indent
-        for _ in range(rng.randint(1, 3)):
-            bw = rng.uniform(14, w * 0.32)
-            if cx + bw > x + w - 14:
-                break
-            col = rng.choice([GREEN, GREEN, GREEN, MUTED, GOLD if rng.random() < .2 else GREEN])
-            for off in (0, period):
-                bars.append(f'<rect x="{cx:.1f}" y="{y + 10 + r * rows_h + off:.1f}" width="{bw:.1f}" height="5" '
-                            f'rx="2.5" fill="{col}" opacity="{rng.uniform(.2, .45):.2f}"/>')
-            cx += bw + 7
-    name = d.uid("code")
-    d.css.append(f".{name}{{animation:{name} {8 + seed % 3}s linear infinite}}"
-                 f"@keyframes {name}{{to{{transform:translateY(-{period}px)}}}}")
-    d.add(f'<g clip-path="url(#{cid})" class="fade" style="animation-delay:{delay:.2f}s">'
-          f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="url(#{sg})"/>'
-          f'<g class="{name}">{"".join(bars)}</g>'
-          f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="{BG}" opacity=".5"/></g>')
-    d.add(f'<g clip-path="url(#{cid})"><g class="up" style="animation-delay:{delay + .2:.2f}s">'
-          f'{ARTS[art](d, x, y, w, h)}</g></g>')
-    scanlines(d, x, y, w, h, band=False)
-
-
-def dragon_radar(d, cx, cy, r):
-    """A dragon radar: green gridded scope, a sweep, and orbs blinking in range."""
-    gid = d.uid("rad")
-    d.defs.append(f'<radialGradient id="{gid}" cx=".5" cy=".5" r=".5">'
-                  f'<stop offset="0" stop-color="#1C5A2A"/><stop offset="1" stop-color="#0A2412"/></radialGradient>')
-    d.add(f'<circle cx="{cx}" cy="{cy}" r="{r + 14}" fill="#2A2F33" stroke="#4A5257" stroke-width="2"/>')
-    d.add(f'<rect x="{cx - 14}" y="{cy - r - 30}" width="28" height="20" rx="5" fill="#4A5257"/>')
-    d.add(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="url(#{gid})"/>')
-    cid = d.uid("radclip")
-    d.defs.append(f'<clipPath id="{cid}"><circle cx="{cx}" cy="{cy}" r="{r}"/></clipPath>')
-    step = r / 4
-    gl = "".join(f'<line x1="{cx - r}" x2="{cx + r}" y1="{cy + k * step:.1f}" y2="{cy + k * step:.1f}"/>'
-                 f'<line y1="{cy - r}" y2="{cy + r}" x1="{cx + k * step:.1f}" x2="{cx + k * step:.1f}"/>'
-                 for k in range(-4, 5))
-    d.add(f'<g clip-path="url(#{cid})" stroke="{GREEN}" stroke-width="1" opacity=".35">{gl}</g>')
+def radar(d, cx, cy, R):
+    """A dragon radar: drawn silver case, the reference's green screen, a live sweep."""
+    r = R - 26
+    period = 3.6
+    d.defs.append(
+        '<linearGradient id="caseG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F4F6F8"/>'
+        '<stop offset=".45" stop-color="#C9CFD4"/><stop offset=".75" stop-color="#9AA3AA"/>'
+        '<stop offset="1" stop-color="#D7DCE0"/></linearGradient>'
+        '<linearGradient id="bezelG" x1="1" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#F7F9FA"/>'
+        '<stop offset="1" stop-color="#8E979E"/></linearGradient>'
+        '<linearGradient id="crownG" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8E979E"/>'
+        '<stop offset=".35" stop-color="#F2F4F6"/><stop offset="1" stop-color="#7D868D"/></linearGradient>'
+        '<radialGradient id="vigG" cx=".5" cy=".5" r=".5"><stop offset=".78" stop-color="#000" stop-opacity="0"/>'
+        '<stop offset="1" stop-color="#03250A" stop-opacity=".33"/></radialGradient>'
+        '<radialGradient id="blipG"><stop offset="0" stop-color="#FFE08A"/><stop offset=".5" stop-color="#FFA21F"/>'
+        '<stop offset="1" stop-color="#FFA21F" stop-opacity="0"/></radialGradient>'
+        f'<clipPath id="domeC"><circle cx="{cx}" cy="{cy}" r="{r}"/></clipPath>'
+        '<filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="10"/></filter>')
+    d.css.append(
+        f".rsweep{{transform-origin:{cx}px {cy}px;animation:rsweep {period}s linear infinite}}"
+        "@keyframes rsweep{to{transform:rotate(360deg)}}"
+        f".rpulse{{transform-origin:{cx}px {cy}px;animation:rpulse {period}s ease-out infinite}}"
+        "@keyframes rpulse{from{transform:scale(.05);opacity:.9}to{transform:scale(1);opacity:0}}"
+        f".rblip{{animation:rblip {period}s linear infinite}}"
+        "@keyframes rblip{0%,8%{opacity:1}60%{opacity:.25}100%{opacity:1}}"
+        f".rglow{{animation:rglow {period}s ease-in-out infinite}}@keyframes rglow{{50%{{opacity:.38}}}}")
+    out = [f'<circle cx="{cx}" cy="{cy}" r="{R - 6}" fill="#3CFF5A" opacity=".22" filter="url(#soft)" class="rglow"/>',
+           f'<rect x="{cx - 16}" y="{cy - R - 22}" width="32" height="30" fill="url(#crownG)" stroke="#2B3035" stroke-width="3"/>',
+           f'<rect x="{cx - 30}" y="{cy - R - 50}" width="60" height="34" rx="6" fill="url(#crownG)" stroke="#2B3035" stroke-width="3"/>',
+           '<g stroke="#5E676E" stroke-width="2" opacity=".7">'
+           + "".join(f'<line x1="{cx - 24 + i * 6}" y1="{cy - R - 45}" x2="{cx - 24 + i * 6}" y2="{cy - R - 21}"/>'
+                     for i in range(9)) + "</g>",
+           f'<circle cx="{cx}" cy="{cy}" r="{R}" fill="url(#caseG)" stroke="#2B3035" stroke-width="4"/>',
+           f'<circle cx="{cx}" cy="{cy}" r="{R - 12}" fill="none" stroke="url(#bezelG)" stroke-width="10"/>',
+           f'<circle cx="{cx}" cy="{cy}" r="{r + 3}" fill="#1E2428"/>']
+    inner = [f'<image href="{dome_uri(400)}" x="{cx - r}" y="{cy - r}" width="{2 * r}" height="{2 * r}"/>']
     wedges = []
-    for i in range(14):
-        a0, a1 = math.radians(-i * 4), math.radians(-(i + 1) * 4)
-        wedges.append(f'<path d="M{cx} {cy}L{cx + r * math.cos(a0):.1f} {cy + r * math.sin(a0):.1f}'
-                      f'A{r} {r} 0 0 0 {cx + r * math.cos(a1):.1f} {cy + r * math.sin(a1):.1f}Z" '
-                      f'opacity="{0.35 * (1 - i / 14):.2f}"/>')
-    d.css.append(f".sweep{{transform-origin:{cx}px {cy}px;animation:sweep 4s linear infinite}}"
-                 f"@keyframes sweep{{to{{transform:rotate(360deg)}}}}")
-    d.add(f'<g class="sweep" fill="{GREEN}">{"".join(wedges)}</g>')
-    d.add(f'<path d="{star_path(cx, cy, 7, 3, rot=-90)}" fill="{RED}"/>')
-    for i, (bx, by) in enumerate([(.45, -.32), (-.52, .3), (.18, .58), (-.2, -.6), (.62, .22)]):
-        d.add(f'<g class="blink" style="animation-delay:{i * .3:.2f}s">'
-              f'<circle cx="{cx + r * bx:.1f}" cy="{cy + r * by:.1f}" r="5.5" fill="{GOLD}"/>'
-              f'<circle cx="{cx + r * bx:.1f}" cy="{cy + r * by:.1f}" r="10" fill="{GOLD}" opacity=".25"/></g>')
-    d.add(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#0A0F0C" stroke-width="3"/>')
+    for i in range(18):
+        b0, b1 = math.radians(-i * 3.5), math.radians(-(i + 1) * 3.5)
+        wedges.append(f'<path d="M{cx} {cy}L{cx + r * math.cos(b0):.1f} {cy + r * math.sin(b0):.1f}'
+                      f'A{r} {r} 0 0 0 {cx + r * math.cos(b1):.1f} {cy + r * math.sin(b1):.1f}Z" '
+                      f'opacity="{.5 * (1 - i / 18):.2f}"/>')
+    inner.append(f'<g class="rsweep" fill="#fff">{"".join(wedges)}'
+                 f'<line x1="{cx}" y1="{cy}" x2="{cx + r}" y2="{cy}" stroke="#fff" stroke-width="2" opacity=".85"/></g>')
+    inner.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#F4FFE6" stroke-width="3" class="rpulse"/>')
+    # The blips already on the reference screen, as fractions of its radius.
+    for bx, by in [(.27, -.48), (-.49, -.22), (-.77, -.04), (-.07, -.09), (.81, -.15), (-.49, .44), (.28, .7)]:
+        x, y = cx + bx * r, cy + by * r
+        ang = math.degrees(math.atan2(by, bx)) % 360
+        inner.append(f'<g class="rblip" style="animation-delay:{ang / 360 * period - period:.2f}s">'
+                     f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r * .085:.1f}" fill="url(#blipG)"/>'
+                     f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{r * .026:.1f}" fill="#FFD27A"/></g>')
+    inner.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="url(#vigG)"/>')
+    out.append(f'<g clip-path="url(#domeC)">{"".join(inner)}</g>')
+    out.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="#0E1A10" stroke-width="3"/>')
+    d.add(f'<g class="fade" style="animation-delay:.3s">{"".join(out)}</g>')
 
 
-def saiyan_file():
-    """Fighter file: mission, status and training, beside a dragon radar."""
-    p = PROFILE
-    rows = p["file"]
-    x0, x1 = 440, W - 56
-    size, lh = 25, 32
-    wrapped = [wrap(MED, line, size, x1 - x0) for _, line in rows]
-    msize = fit(BOLD, ["SHIP FAST. KEEP TRAINING."], x1 - x0, 44)
-    motto = wrap(BOLD, p["motto"], msize, x1 - x0)
-    H = 70 + sum(56 + len(ls) * lh for ls in wrapped) + 60 + len(motto) * msize * 0.95 + 56
-    H = max(H, 560)
-    d = SVG("file", round(H), "Saiyan file: " + " ".join(f"{label.capitalize()}: {l}" for label, l in rows)
-            + f" Motto: {p['motto'].capitalize()}")
+def mission():
+    m = PROFILE["mission"]
+    H = 410
+    d = SVG("mission", H, f"Current mission: {''.join(m['name'])}. {m['lead']} {m['detail']} Status: {m['status'].lower()}.")
     grid(d, 0, 0, W, H)
-    d.add(f'<rect x="12" y="0" width="{W - 24}" height="{H}" fill="{PANEL}" opacity=".55"/>')
-
+    d.add(f'<rect width="{W}" height="1" fill="{LINE}"/>')
     x = 56
-    bracket(d, x, 64, "SAIYAN FILE", GREEN)
-    headline(d, ["SAIYAN", "FILE"], x - 4, 150, 84, TEXT, glow=ORANGE)
-    dragon_radar(d, 196, 380, 104)
-    d.add(d.text(x, H - 52, f"FILE // {p['name']}", MONO_B, 12, MUTED, ls=0.5))
-    d.add(d.text(x, H - 32, "SIGNALS IN RANGE // 05", MONO_B, 12, DIM, ls=0.5))
+    bracket(d, x, 62, "CURRENT MISSION")
 
-    y = 64
-    for i, ((label, _), lines) in enumerate(zip(rows, wrapped)):
-        delay = 0.3 + i * 0.15
-        parts = [f'<line x1="{x0}" x2="{x1}" y1="{y - 18}" y2="{y - 18}" stroke="{LINE}"/>',
-                 d.text(x0, y + 8, f"{i + 1:02d} // {label}", MONO_B, 12, ORANGE, ls=0.6)]
-        for j, line in enumerate(lines):
-            parts.append(d.text(x0, y + 44 + j * lh, line, MED, size, TEXT))
-        d.add(f'<g class="up" style="animation-delay:{delay:.2f}s">{"".join(parts)}</g>')
-        y += 56 + len(lines) * lh + 8
+    size, base = 96, 156
+    a, b = m["name"]
+    aw = BOLD.width(a, size, -0.01 * size)
+    cid = d.clip_rect(0, base - size, W, size * 1.25)
+    glow = ""
+    if GLOW:
+        f = d.glow_filter(7)
+        glow = (f'<g filter="url(#{f})" opacity=".5">{d.text(x - 4, base, a, BOLD, size, ORANGE, ls=-0.01 * size)}'
+                f'{d.text(x - 4 + aw, base, b, BOLD, size, ORANGE, ls=-0.01 * size)}</g>')
+    d.add(f'<g clip-path="url(#{cid})"><g class="rise" style="animation-delay:.1s">{glow}'
+          f'{d.text(x - 4, base, a, BOLD, size, TEXT, ls=-0.01 * size)}'
+          f'{d.text(x - 4 + aw, base, b, BOLD, size, ORANGE, ls=-0.01 * size)}</g></g>')
 
-    y += 10
-    parts = [f'<line x1="{x0}" x2="{x1}" y1="{y - 18}" y2="{y - 18}" stroke="{GOLD}" opacity=".6"/>',
-             d.text(x0, y + 8, f"{len(rows) + 1:02d} // MOTTO", MONO_B, 12, GOLD, ls=0.6)]
-    d.add(f'<g class="up" style="animation-delay:{0.3 + len(rows) * 0.15:.2f}s">{"".join(parts)}</g>')
-    headline(d, motto, x0 - 2, y + 22 + msize * 0.72, msize, GOLD,
-             delay=0.4 + len(rows) * 0.15, lh=0.95, glow=ORANGE)
+    # Lead sentence in full colour, the detail muted, wrapped together.
+    tsize, lh, maxw = 27, 35, 560
+    words = [(w, TEXT) for w in m["lead"].split()] + [(w, MUTED) for w in m["detail"].split()]
+    lines, cur, cw = [], [], 0.0
+    space = MED.width(" ", tsize)
+    for wd, col in words:
+        ww = MED.width(wd, tsize)
+        if cur and cw + space + ww > maxw:
+            lines.append(cur)
+            cur, cw = [], 0.0
+        cur.append((wd, col, ww))
+        cw += (space if cw else 0) + ww
+    lines.append(cur)
+    y = 212
+    parts = []
+    for line in lines:
+        lx = x
+        for wd, col, ww in line:
+            parts.append(d.text(lx, y, wd, MED, tsize, col))
+            lx += ww + space
+        y += lh
+    d.add(f'<g class="up" style="animation-delay:.3s">{"".join(parts)}</g>')
+
+    py = y + 8
+    d.add('<g class="up" style="animation-delay:.45s">')
+    pw = pill(d, x, py, m["status"], dot=GREEN, fg=GREEN)
+    bx = x + pw + 12
+    label = f'{m["button"]} →'
+    bw = MONO_B.width(label, 13, 0.8) + 32
+    d.add(f'<rect x="{bx:.1f}" y="{py}" width="{bw:.1f}" height="34" rx="5" fill="{ORANGE}"/>'
+          + d.text(bx + 16, py + 21.6, label, MONO_B, 13, ON_ORANGE, ls=0.8))
+    d.add("</g>")
+
+    rcx, rcy, rr = 806, 218, 128
+    radar(d, rcx, rcy, rr)
+    d.add(d.text(rcx, rcy + rr + 46, "SIGNALS IN RANGE // 07", MONO_B, 12, DIM, "middle", 0.8))
     d.save()
 
 
 def techniques():
     items = PROFILE["techniques"]
     arsenal = PROFILE["arsenal"]
-    x = 56
-    gap = 28
-    mw = (W - 2 * x - gap * (len(items) - 1)) / len(items)
-    my, mh = 200, 160
+    x, gap = 56, 20
+    tw = (W - 2 * x - gap * (len(items) - 1)) / len(items)
+    ty, th = 92, 136
+    ic = 80
 
-    # Arsenal chips, wrapped into rows under the lenses.
-    chip_h, chip_gap, size = 30, 10, 12
+    chip_h, chip_gap, csize = 34, 10, 13
     chip_rows, cur, cur_w = [], [], 0.0
     for t in arsenal:
-        cw = MONO_B.width(t, size, 0.6) + 28
+        cw = MONO_B.width(t, csize, 0.8) + 30
         if cur and cur_w + chip_gap + cw > W - 2 * x:
             chip_rows.append(cur)
             cur, cur_w = [], 0.0
         cur.append((t, cw))
         cur_w += (chip_gap if cur_w else 0) + cw
     chip_rows.append(cur)
-    ay = my + mh + 140
-    H = round(ay + 40 + len(chip_rows) * (chip_h + chip_gap) + 40)
+    ay = ty + th + 52
+    H = round(ay + 22 + len(chip_rows) * (chip_h + chip_gap) + 34)
 
-    d = SVG("techniques", H, "Techniques: " + ", ".join(f"{n.lower()} ({what.lower()})" for n, what, _ in items)
+    d = SVG("techniques", H, "Techniques: " + ", ".join(f"{n.lower()} ({w.lower()})" for n, w, _, _ in items)
             + ". Arsenal: " + ", ".join(t.lower() for t in arsenal) + ".")
     grid(d, 0, 0, W, H)
-    bracket(d, x, 64, "TECHNIQUES", GREEN)
-    headline(d, ["TECHNIQUES"], x - 4, 150, 96, TEXT, delay=0.1, glow=ORANGE)
-    online = f"{len(items):02d} TECHNIQUES MASTERED"
-    status_dot(d, W - 56 - MONO_B.width(online, 12, 0.5) - 16, 139)
-    d.add(d.text(W - 56, 144, online, MONO_B, 12, MUTED, "end", 0.5))
+    d.add(f'<rect width="{W}" height="1" fill="{LINE}"/>')
+    bracket(d, x, 60, "TECHNIQUES")
+    d.add(d.text(W - x, 60, PROFILE["techniques_note"], MONO_B, 13, MUTED, "end", 0.8))
 
-    nsize = fit(BOLD, [n for n, _, _ in items], mw, 44)
-    for i, (name, what, art) in enumerate(items):
-        mx = x + i * (mw + gap)
-        lens(d, mx, my, mw, mh, art, seed=i + 3, delay=0.2 + i * 0.15)
-        ly = my + mh + 26
-        d.add(f'<g class="up" style="animation-delay:{0.4 + i * 0.15:.2f}s">'
-              f'<line x1="{mx - 7}" x2="{mx + mw + 7}" y1="{ly}" y2="{ly}" stroke="{LINE}"/>'
-              + d.text(mx - 6, ly + 26, f"{i + 1:02d} / {what}", MONO_B, 12, MUTED, ls=0.5)
-              + d.text(mx - 8, ly + 72, name, BOLD, nsize, TEXT, ls=-0.4)
-              + "</g>")
+    nsize = 30
+    for i, (name, what, clip, focus) in enumerate(items):
+        mx = x + i * (tw + gap)
+        uri, (n, dur) = sprite(clip, 160, focus)
+        k = f"sp{i}"
+        d.css.append(f".{k}{{animation:{k} {dur:.2f}s steps({n}) infinite}}"
+                     f"@keyframes {k}{{to{{transform:translateY(-{n * ic}px)}}}}")
+        ix, iy = mx + 16, ty + (th - ic) / 2
+        cid = d.clip_rect(ix, iy, ic, ic, 6)
+        tx = ix + ic + 16
+        maxw = mx + tw - 14 - tx
+        nlines = wrap(BOLD, name, nsize, maxw)
+        wlines = wrap(MONO_B, what, 11, maxw, 0.6)
+        block = len(nlines) * nsize * 0.9 + 8 + len(wlines) * 15
+        by = ty + (th - block) / 2 + nsize * 0.74
+        parts = [f'<rect x="{mx}" y="{ty}" width="{tw:.1f}" height="{th}" rx="8" fill="{TILE}" stroke="{LINE}"/>',
+                 f'<g clip-path="url(#{cid})"><g class="{k}"><image href="{uri}" x="{ix}" y="{iy:.1f}" '
+                 f'width="{ic}" height="{n * ic}" preserveAspectRatio="none"/></g></g>',
+                 f'<rect x="{ix}" y="{iy:.1f}" width="{ic}" height="{ic}" rx="6" fill="none" stroke="{LINE}"/>']
+        for j, ln in enumerate(nlines):
+            parts.append(d.text(tx, by + j * nsize * 0.9, ln, BOLD, nsize, TEXT, ls=-0.2))
+        wy = by + (len(nlines) - 1) * nsize * 0.9 + 24
+        for j, ln in enumerate(wlines):
+            parts.append(d.text(tx, wy + j * 15, ln, MONO_B, 11, MUTED, ls=0.6))
+        d.add(f'<g class="up" style="animation-delay:{0.2 + i * 0.15:.2f}s">{"".join(parts)}</g>')
 
-    d.add(f'<line x1="{x}" x2="{W - x}" y1="{ay - 4}" y2="{ay - 4}" stroke="{LINE}"/>')
-    d.add(d.text(x, ay + 22, "ARSENAL", MONO_B, 12, GOLD, ls=0.6))
-    cy = ay + 40
+    d.add(d.text(x, ay, "ARSENAL", MONO_B, 13, GOLD, ls=0.8))
+    cy = ay + 20
     for r, row in enumerate(chip_rows):
         cx = x
         for j, (t, cw) in enumerate(row):
-            delay = 0.6 + (r * len(row) + j) * 0.05
-            d.add(f'<g class="up" style="animation-delay:{delay:.2f}s">'
-                  f'<rect x="{cx:.1f}" y="{cy}" width="{cw:.1f}" height="{chip_h}" rx="15" fill="{PANEL2}" stroke="{LINE}"/>'
-                  + d.text(cx + 14, cy + chip_h / 2 + 4.4, t, MONO_B, size, TEXT, ls=0.6) + "</g>")
+            d.add(f'<g class="up" style="animation-delay:{0.6 + (r * len(row) + j) * 0.05:.2f}s">'
+                  f'<rect x="{cx:.1f}" y="{cy}" width="{cw:.1f}" height="{chip_h}" rx="{chip_h / 2}" fill="{TILE}" stroke="{LINE}"/>'
+                  + d.text(cx + 15, cy + chip_h / 2 + 4.6, t, MONO_B, csize, TEXT, ls=0.8) + "</g>")
             cx += cw + chip_gap
         cy += chip_h + chip_gap
     d.save()
 
 
 def footer():
-    H = 200
-    p = PROFILE
-    c = p["footer"]
-    d = SVG("footer", H, f"{p['name']}. {c['mid'].capitalize()}.", corners="bottom")
+    H = 112
+    c = PROFILE["footer"]
+    d = SVG("footer", H, f"{PROFILE['name']}. {c['right'].capitalize()}.", corners="bottom")
+    d.add(f'<rect width="{W}" height="{H}" fill="{PANEL2 if not GLOW else BG}"/>')
     d.add(f'<rect width="{W}" height="1" fill="{LINE}"/>')
-    # Seven star orbs floating in a row.
-    d.css.append(".bob{animation:bob 2.6s ease-in-out infinite}@keyframes bob{50%{transform:translateY(-7px)}}")
-    span = 560
+    y = H / 2
+    d.add(d.text(56, y + 5, c["left"], MONO_B, 13, MUTED, ls=0.8))
+    rw = MONO_B.width(c["right"], 13, 0.8)
+    d.add(f'<rect x="{W - 56 - rw - 18:.1f}" y="{y - 4}" width="9" height="9" fill="{GOLD}" class="blink"/>'
+          + d.text(W - 56, y + 5, c["right"], MONO_B, 13, GOLD, "end", 0.8))
+    d.css.append(".bob{animation:bob 2.6s ease-in-out infinite}@keyframes bob{50%{transform:translateY(-6px)}}")
+    size, step = 42, 56
+    glow = d.glow_filter(7)
+    x0 = W / 2 - step * 3
     for i in range(7):
-        ox = W / 2 - span / 2 + i * span / 6
-        d.add(f'<g class="bob" style="animation-delay:{i * .18:.2f}s">{orb(d, ox, 72, 17, stars=i + 1)}</g>')
-    # A ki blast streaking across.
-    d.css.append(".fly{animation:fly 6s cubic-bezier(.5,0,.5,1) infinite}"
-                 "@keyframes fly{from{transform:translate(-160px,34px)}to{transform:translate(1160px,34px)}}")
-    tail = d.uid("tail")
-    d.defs.append(f'<linearGradient id="{tail}" x1="0" y1="0" x2="1" y2="0">'
-                  f'<stop offset="0" stop-color="{GOLD}" stop-opacity="0"/>'
-                  f'<stop offset="1" stop-color="{GOLD}" stop-opacity=".9"/></linearGradient>')
-    d.add(f'<g class="fly"><rect x="-120" y="-3" width="120" height="6" rx="3" fill="url(#{tail})"/>'
-          f'<circle r="11" fill="{GOLD}" opacity=".6" filter="url(#{d.glow_filter(5)})"/>'
-          f'<circle r="6" fill="#FFF8E0"/></g>')
-    y = H - 34
-    d.add(f'<line x1="56" x2="{W - 56}" y1="{y - 30}" y2="{y - 30}" stroke="{LINE}"/>')
-    d.add(d.text(56, y, c["left"], MONO_B, 12, MUTED, ls=0.6))
-    mw = MONO_B.width(c["mid"], 12, 0.6)
-    d.add(f'<rect x="{W / 2 - mw / 2 - 16}" y="{y - 9}" width="7" height="7" fill="{GOLD}" class="blink"/>'
-          + d.text(W / 2 + 6, y, c["mid"], MONO_B, 12, GOLD, "middle", 0.6))
-    d.add(d.text(W - 56, y, p["url"], MONO_B, 12, MUTED, "end", 0.6))
+        ox = x0 + i * step
+        d.add(f'<g class="bob" style="animation-delay:{i * .18:.2f}s">'
+              f'<circle cx="{ox}" cy="{y + 2}" r="{size * .5}" fill="{ORANGE}" opacity=".45" filter="url(#{glow})"/>'
+              f'<image href="{orb_uri(i + 1, 96)}" x="{ox - size / 2}" y="{y - size / 2}" width="{size}" height="{size}"/></g>')
     d.save()
 
 
 if __name__ == "__main__":
-    OUT.mkdir(exist_ok=True)
-    print(f"Writing SVGs to {OUT}")
-    ticker()
-    hero()
-    saiyan_file()
-    techniques()
-    footer()
+    for theme in THEMES:
+        set_theme(theme)
+        print(f"Writing {theme} panels to {OUT}")
+        ticker()
+        hero()
+        mission()
+        techniques()
+        footer()
